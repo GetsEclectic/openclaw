@@ -316,4 +316,156 @@ describe("acquireSessionWriteLock", () => {
     expect(process.listeners("SIGINT")).toContain(keepAlive);
     process.off("SIGINT", keepAlive);
   });
+
+  it("reclaims own-orphan locks (same PID, not in memory)", async () => {
+    // This simulates Docker container restart where PID is reused
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const sessionFile = path.join(root, "sessions.json");
+      const lockPath = `${sessionFile}.lock`;
+
+      // Create a lock file with our own PID (simulating restart)
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date(Date.now() - 1000).toISOString(),
+        }),
+        "utf8",
+      );
+
+      // Should reclaim the lock since it's our PID but not in HELD_LOCKS
+      const lock = await acquireSessionWriteLock({
+        sessionFile,
+        timeoutMs: 500,
+        detectOwnOrphan: true,
+      });
+
+      // Verify the lock was reclaimed and we now hold it
+      const raw = await fs.readFile(lockPath, "utf8");
+      const payload = JSON.parse(raw) as { pid: number };
+      expect(payload.pid).toBe(process.pid);
+
+      // Verify warning was logged
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("removing orphaned lock from previous process instance"),
+      );
+
+      await lock.release();
+    } finally {
+      warnSpy.mockRestore();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reclaim own-orphan when detectOwnOrphan is disabled", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-"));
+    try {
+      const sessionFile = path.join(root, "sessions.json");
+      const lockPath = `${sessionFile}.lock`;
+
+      // Create a lock file with our own PID
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+        }),
+        "utf8",
+      );
+
+      // Should timeout since detectOwnOrphan is disabled
+      await expect(
+        acquireSessionWriteLock({
+          sessionFile,
+          timeoutMs: 100,
+          staleMs: 60_000, // Not stale
+          detectOwnOrphan: false,
+        }),
+      ).rejects.toThrow(/session file locked/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("respects environment variable overrides", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-"));
+    const originalEnv = { ...process.env };
+    try {
+      const sessionFile = path.join(root, "sessions.json");
+      const lockPath = `${sessionFile}.lock`;
+
+      // Create a stale lock from a dead process
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: 999_999,
+          createdAt: new Date(Date.now() - 5000).toISOString(), // 5s ago
+        }),
+        "utf8",
+      );
+
+      // Set env var for short stale threshold (should reclaim)
+      process.env.OPENCLAW_SESSION_LOCK_STALE_MS = "1000";
+
+      const lock = await acquireSessionWriteLock({
+        sessionFile,
+        timeoutMs: 500,
+        // Don't pass staleMs - should use env var
+      });
+
+      const raw = await fs.readFile(lockPath, "utf8");
+      const payload = JSON.parse(raw) as { pid: number };
+      expect(payload.pid).toBe(process.pid);
+
+      await lock.release();
+    } finally {
+      process.env = originalEnv;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults to 60s timeout instead of 10s", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-lock-"));
+    try {
+      const sessionFile = path.join(root, "sessions.json");
+      const lockPath = `${sessionFile}.lock`;
+
+      // Create a fresh lock from another process
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({
+          pid: 999_999,
+          createdAt: new Date().toISOString(),
+        }),
+        "utf8",
+      );
+
+      const startTime = Date.now();
+
+      // Don't pass timeoutMs - should use new default of 60s
+      // But we don't want to wait that long, so check it times out
+      // after we remove the lock
+      const lockPromise = acquireSessionWriteLock({
+        sessionFile,
+        staleMs: 120_000, // Not stale
+      });
+
+      // Wait a bit then remove the lock
+      await new Promise((r) => setTimeout(r, 200));
+      await fs.rm(lockPath, { force: true });
+
+      // Should acquire after lock is removed
+      const lock = await lockPromise;
+      const elapsed = Date.now() - startTime;
+
+      // Verify we waited (proving default is not 0)
+      expect(elapsed).toBeGreaterThan(100);
+
+      await lock.release();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

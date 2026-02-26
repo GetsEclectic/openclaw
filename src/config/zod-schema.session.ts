@@ -21,11 +21,47 @@ const SessionResetConfigSchema = z
   })
   .strict();
 
+/**
+ * Configuration for session file locking behavior.
+ * These settings help prevent deadlocks in containerized environments
+ * where PID reuse can cause false lock ownership detection.
+ */
+export const SessionWriteLockSchema = z
+  .object({
+    /**
+     * Maximum time to wait when acquiring a lock, in milliseconds.
+     * Default: 60000 (60 seconds). Increased from 10s to allow recovery
+     * when stale locks are detected during the timeout window.
+     */
+    timeoutMs: z.number().int().min(1000).max(600000).optional(),
+    /**
+     * Time after which a lock is considered stale, in milliseconds.
+     * Default: 1800000 (30 minutes).
+     */
+    staleMs: z.number().int().min(10000).max(3600000).optional(),
+    /**
+     * Maximum time a lock can be held, in milliseconds.
+     * Default: 300000 (5 minutes).
+     */
+    maxHoldMs: z.number().int().min(10000).max(600000).optional(),
+    /**
+     * Enable detection of orphaned locks from previous process instances
+     * that share the same PID (common in Docker containers after restart).
+     * When true, locks held by the current PID but not tracked in memory
+     * are treated as orphans and can be reclaimed.
+     * Default: true.
+     */
+    detectOwnOrphan: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 export const SessionSendPolicySchema = createAllowDenyChannelRulesSchema();
 
 export const SessionSchema = z
   .object({
     scope: z.union([z.literal("per-sender"), z.literal("global")]).optional(),
+    lock: SessionWriteLockSchema,
     dmScope: z
       .union([
         z.literal("main"),
