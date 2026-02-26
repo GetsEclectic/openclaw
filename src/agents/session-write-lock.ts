@@ -35,11 +35,13 @@ const CLEANUP_STATE_KEY = Symbol.for("openclaw.sessionWriteLockCleanupState");
 const HELD_LOCKS_KEY = Symbol.for("openclaw.sessionWriteLockHeldLocks");
 const WATCHDOG_STATE_KEY = Symbol.for("openclaw.sessionWriteLockWatchdogState");
 
+const DEFAULT_TIMEOUT_MS = 60_000; // Increased from 10s to allow stale recovery
 const DEFAULT_STALE_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_HOLD_MS = 5 * 60 * 1000;
 const DEFAULT_WATCHDOG_INTERVAL_MS = 60_000;
 const DEFAULT_TIMEOUT_GRACE_MS = 2 * 60 * 1000;
 const MAX_LOCK_HOLD_MS = 2_147_000_000;
+const DEFAULT_DETECT_OWN_ORPHAN = true;
 
 type CleanupState = {
   registered: boolean;
@@ -409,13 +411,35 @@ export async function acquireSessionWriteLock(params: {
   staleMs?: number;
   maxHoldMs?: number;
   allowReentrant?: boolean;
+  /**
+   * Enable detection of orphaned locks from previous process instances
+   * that share the same PID (common in Docker containers after restart).
+   * When true, locks held by the current PID but not tracked in memory
+   * are treated as orphans and can be reclaimed.
+   * Default: true.
+   */
+  detectOwnOrphan?: boolean;
 }): Promise<{
   release: () => Promise<void>;
 }> {
   registerCleanupHandlers();
-  const timeoutMs = resolvePositiveMs(params.timeoutMs, 10_000, { allowInfinity: true });
-  const staleMs = resolvePositiveMs(params.staleMs, DEFAULT_STALE_MS);
+  // Environment variable overrides for runtime configuration
+  const envTimeoutMs = process.env.OPENCLAW_SESSION_LOCK_TIMEOUT_MS
+    ? parseInt(process.env.OPENCLAW_SESSION_LOCK_TIMEOUT_MS, 10)
+    : undefined;
+  const envStaleMs = process.env.OPENCLAW_SESSION_LOCK_STALE_MS
+    ? parseInt(process.env.OPENCLAW_SESSION_LOCK_STALE_MS, 10)
+    : undefined;
+  const envDetectOwnOrphan = process.env.OPENCLAW_SESSION_LOCK_DETECT_OWN_ORPHAN
+    ? process.env.OPENCLAW_SESSION_LOCK_DETECT_OWN_ORPHAN.toLowerCase() !== "false"
+    : undefined;
+
+  const timeoutMs = resolvePositiveMs(params.timeoutMs ?? envTimeoutMs, DEFAULT_TIMEOUT_MS, {
+    allowInfinity: true,
+  });
+  const staleMs = resolvePositiveMs(params.staleMs ?? envStaleMs, DEFAULT_STALE_MS);
   const maxHoldMs = resolvePositiveMs(params.maxHoldMs, DEFAULT_MAX_HOLD_MS);
+  const detectOwnOrphan = params.detectOwnOrphan ?? envDetectOwnOrphan ?? DEFAULT_DETECT_OWN_ORPHAN;
   const sessionFile = path.resolve(params.sessionFile);
   const sessionDir = path.dirname(sessionFile);
   await fs.mkdir(sessionDir, { recursive: true });
@@ -481,6 +505,26 @@ export async function acquireSessionWriteLock(params: {
       const payload = await readLockPayload(lockPath);
       const nowMs = Date.now();
       const inspected = inspectLockPayload(payload, staleMs, nowMs);
+
+      // Own-orphan detection: If the lock is held by our PID but we don't
+      // have it in memory, this is an orphan from a previous process instance
+      // (common after Docker container restart where PIDs are reused).
+      const isOwnOrphan =
+        detectOwnOrphan &&
+        typeof payload?.pid === "number" &&
+        payload.pid === process.pid &&
+        !HELD_LOCKS.has(normalizedSessionFile);
+
+      if (isOwnOrphan) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[session-write-lock] removing orphaned lock from previous process instance: ` +
+            `pid=${payload.pid} lockPath=${lockPath}`,
+        );
+        await fs.rm(lockPath, { force: true });
+        continue;
+      }
+
       if (await shouldReclaimContendedLockFile(lockPath, inspected, staleMs, nowMs)) {
         await fs.rm(lockPath, { force: true });
         continue;
