@@ -724,7 +724,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                   memory_search: ["query"],
                   memory_store: ["text"],
                 };
-                const tool = name ?? "tool";
+                const tool = (name ?? "tool").toLowerCase().replace(/ /g, "_");
                 const emoji = (TOOL_EMOJIS as Record<string, string>)[tool] ?? "🔧";
                 const label = tool.replace(/_/g, " ");
                 const allKeys = DETAIL_KEYS as Record<string, string[]>;
