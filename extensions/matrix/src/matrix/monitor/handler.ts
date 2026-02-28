@@ -701,7 +701,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
               }
             : undefined,
           onToolStart: streamingEnabled
-            ? async ({ name, args }) => {
+            ? async ({ name, args, phase }) => {
                 const TOOL_EMOJIS: Record<string, string> = {
                   exec: "⚙️",
                   read: "📖",
@@ -741,7 +741,24 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                   }
                 }
                 const line = detail ? emoji + " " + label + ": " + detail : emoji + " " + label;
-                toolLines.push(line);
+                // On update phase with detail: amend the last line for this tool instead of adding a new one
+                const lastIdx = toolLines.length - 1;
+                if (
+                  phase === "update" &&
+                  lastIdx >= 0 &&
+                  detail &&
+                  toolLines[lastIdx].startsWith(emoji)
+                ) {
+                  toolLines[lastIdx] = line;
+                } else if (
+                  phase !== "update" ||
+                  toolLines.length === 0 ||
+                  !toolLines[lastIdx].startsWith(emoji + " " + label)
+                ) {
+                  toolLines.push(line);
+                } else if (detail) {
+                  toolLines[lastIdx] = line;
+                }
                 if (!toolStatusDraft) {
                   toolStatusDraft = createMatrixDraftStream({
                     roomId,
