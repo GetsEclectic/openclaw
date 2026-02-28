@@ -12,6 +12,7 @@ import {
 } from "openclaw/plugin-sdk";
 import type { CoreConfig, MatrixRoomConfig, ReplyToMode } from "../../types.js";
 import { fetchEventSummary } from "../actions/summary.js";
+import { createMatrixDraftStream } from "../draft-stream.js";
 import {
   formatPollAsText,
   isPollStartType,
@@ -631,12 +632,38 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           });
         },
       });
+      const streamingEnabled = cfg.channels?.matrix?.streaming !== "off";
+      const draftStream = streamingEnabled
+        ? createMatrixDraftStream({
+            roomId,
+            client,
+            threadId: threadTarget,
+            accountId: route.accountId,
+            log: logVerboseMessage,
+            warn: logVerboseMessage,
+          })
+        : null;
+
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
           ...prefixOptions,
           humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId),
           typingCallbacks,
           deliver: async (payload) => {
+            const finalText = payload.text;
+            const canFinalize =
+              draftStream?.messageId() &&
+              !payload.isError &&
+              typeof finalText === "string" &&
+              finalText.trim().length > 0;
+            if (canFinalize && draftStream) {
+              const finalized = await draftStream.finalize(finalText!);
+              if (finalized) {
+                didSendReply = true;
+                return;
+              }
+            }
+            draftStream?.stop();
             await deliverMatrixReplies({
               replies: [payload],
               roomId,
@@ -652,6 +679,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           },
           onError: (err, info) => {
             runtime.error?.(`matrix ${info.kind} reply failed: ${String(err)}`);
+            void draftStream?.clear();
           },
         });
 
@@ -663,10 +691,24 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           ...replyOptions,
           skillFilter: roomConfig?.skills,
           onModelSelected,
+          onPartialReply: draftStream
+            ? async (payload) => {
+                const text = payload.text?.trimEnd();
+                if (text) draftStream.update(text);
+              }
+            : undefined,
+          onToolStart: draftStream
+            ? async ({ name, args }) => {
+                const toolLabel = name ? name.replace(/_/g, " ") : "tool";
+                draftStream.forceUpdate("🔧 " + toolLabel + "…");
+              }
+            : undefined,
         },
       });
+      await draftStream?.flush();
       markDispatchIdle();
       if (!queuedFinal) {
+        await draftStream?.clear();
         return;
       }
       didSendReply = true;
