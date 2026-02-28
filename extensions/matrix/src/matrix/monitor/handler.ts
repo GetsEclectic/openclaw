@@ -12,7 +12,7 @@ import {
 } from "openclaw/plugin-sdk";
 import type { CoreConfig, MatrixRoomConfig, ReplyToMode } from "../../types.js";
 import { fetchEventSummary } from "../actions/summary.js";
-import { createMatrixDraftStream } from "../draft-stream.js";
+import { createMatrixDraftStream, type MatrixDraftStream } from "../draft-stream.js";
 import {
   formatPollAsText,
   isPollStartType,
@@ -643,6 +643,9 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             warn: logVerboseMessage,
           })
         : null;
+      const toolLines: string[] = [];
+      let toolStatusDraft: MatrixDraftStream | undefined;
+      let toolStatusStopped = false;
 
       const { dispatcher, replyOptions, markDispatchIdle } =
         core.channel.reply.createReplyDispatcherWithTyping({
@@ -697,16 +700,37 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 if (text) draftStream.update(text);
               }
             : undefined,
-          onToolStart: draftStream
+          onToolStart: streamingEnabled
             ? async ({ name, args }) => {
                 const toolLabel = name ? name.replace(/_/g, " ") : "tool";
-                draftStream.forceUpdate("🔧 " + toolLabel + "…");
+                toolLines.push("🔧 " + toolLabel + "…");
+                if (!toolStatusDraft) {
+                  toolStatusDraft = createMatrixDraftStream({
+                    roomId,
+                    client,
+                    threadId: threadTarget,
+                    accountId: route.accountId,
+                    throttleMs: 800,
+                    log: logVerboseMessage,
+                    warn: logVerboseMessage,
+                  });
+                }
+                toolStatusDraft.forceUpdate(toolLines.join("\n"));
               }
             : undefined,
+          onAssistantMessageStart: async () => {
+            if (toolStatusDraft && !toolStatusStopped) {
+              toolStatusStopped = true;
+              await toolStatusDraft.stop();
+            }
+          },
         },
       });
       await draftStream?.flush();
       markDispatchIdle();
+      if (toolStatusDraft && !toolStatusStopped) {
+        await toolStatusDraft.stop();
+      }
       if (!queuedFinal) {
         await draftStream?.clear();
         return;
