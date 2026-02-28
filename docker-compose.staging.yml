@@ -1,0 +1,32 @@
+# Staging instance — test changes here before promoting to prod
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml --env-file .env.staging up -d openclaw-gateway
+services:
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    container_name: openclaw-staging-gateway
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
+      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
+      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - ${OPENCLAW_CONFIG_DIR}/ssh:/home/node/.ssh
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18791}:18789"
+      - "${OPENCLAW_BRIDGE_PORT:-18792}:18790"
+    init: true
+    restart: unless-stopped
+    command:
+      [
+        "openclaw",
+        "gateway",
+        "--bind",
+        "lan",
+        "--port",
+        "18789",
+      ]
