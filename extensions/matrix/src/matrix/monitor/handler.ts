@@ -702,8 +702,46 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             : undefined,
           onToolStart: streamingEnabled
             ? async ({ name, args }) => {
-                const toolLabel = name ? name.replace(/_/g, " ") : "tool";
-                toolLines.push("🔧 " + toolLabel + "…");
+                const TOOL_EMOJIS: Record<string, string> = {
+                  exec: "⚙️",
+                  read: "📖",
+                  write: "✏️",
+                  edit: "✏️",
+                  web_fetch: "🌐",
+                  web_search: "🔍",
+                  browser: "🌐",
+                  memory_search: "🧠",
+                  memory_store: "🧠",
+                  memory_get: "🧠",
+                };
+                const DETAIL_KEYS: Record<string, string[]> = {
+                  exec: ["command"],
+                  read: ["path", "file_path"],
+                  write: ["path", "file_path"],
+                  edit: ["path", "file_path"],
+                  web_fetch: ["url"],
+                  web_search: ["query"],
+                  memory_search: ["query"],
+                  memory_store: ["text"],
+                };
+                const tool = name ?? "tool";
+                const emoji = (TOOL_EMOJIS as Record<string, string>)[tool] ?? "🔧";
+                const label = tool.replace(/_/g, " ");
+                const allKeys = DETAIL_KEYS as Record<string, string[]>;
+                const detailKeys = allKeys[tool] ?? ["query", "command", "path", "url", "message"];
+                let detail = "";
+                if (args) {
+                  for (const k of detailKeys) {
+                    const v = args[k];
+                    if (v && typeof v === "string") {
+                      detail = v.replace(/\n/g, " ").slice(0, 80);
+                      if (v.length > 80) detail += "…";
+                      break;
+                    }
+                  }
+                }
+                const line = detail ? emoji + " " + label + ": " + detail : emoji + " " + label;
+                toolLines.push(line);
                 if (!toolStatusDraft) {
                   toolStatusDraft = createMatrixDraftStream({
                     roomId,
