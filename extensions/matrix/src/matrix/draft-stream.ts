@@ -1,7 +1,7 @@
 import { editMatrixMessage, deleteMatrixMessage } from "./actions/messages.js";
 import { sendMessageMatrix } from "./send.js";
 
-const MATRIX_DRAFT_MIN_CHARS = 30;
+const MATRIX_DRAFT_MIN_CHARS = 5;
 const DEFAULT_THROTTLE_MS = 1200;
 
 export type MatrixDraftStream = {
