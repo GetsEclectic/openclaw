@@ -84,10 +84,6 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
       }
 
       const memberCount = await resolveMemberCount(roomId);
-      if (memberCount === 2) {
-        log(`matrix: dm detected via member count room=${roomId} members=${memberCount}`);
-        return true;
-      }
 
       const selfUserId = params.selfUserId ?? (await ensureSelfUserId());
       const directViaState =
