@@ -1,65 +1,45 @@
-FROM node:22-bookworm@sha256:cd7bcd2e7a1e6f72052feb023c7f6b722205d3fcab7bbcbd2d1bfdab10b1e935
+# Stage 1: Build
+FROM node:22-slim AS builder
 
-# Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+RUN apt-get update && apt-get install -y git curl jq && rm -rf /var/lib/apt/lists/*
+RUN npm install -g pnpm
 
-RUN corepack enable
+COPY . /tmp/openclaw
+RUN cd /tmp/openclaw \
+    && pnpm install \
+    && pnpm run build \
+    && npm pack \
+    && mv openclaw-*.tgz /tmp/openclaw.tgz
 
-WORKDIR /app
-RUN chown node:node /app
+# Stage 2: Runtime
+FROM node:22-slim
 
-ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
-      apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES && \
-      apt-get clean && \
-      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
-    fi
+# Runtime dependencies
+RUN apt-get update && apt-get install -y \
+    git curl jq ripgrep sqlite3 procps \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY --chown=node:node ui/package.json ./ui/package.json
-COPY --chown=node:node patches ./patches
-COPY --chown=node:node scripts ./scripts
+# Install openclaw from tarball + cleanup
+COPY --from=builder /tmp/openclaw.tgz /tmp/openclaw.tgz
+RUN npm install -g /tmp/openclaw.tgz \
+    && rm /tmp/openclaw.tgz \
+    && npm cache clean --force \
+    && rm -rf /root/.npm/_cacache /root/.npm/_logs
 
-USER node
-RUN pnpm install --frozen-lockfile
+# Install gogcli
+RUN curl -sL https://github.com/steipete/gogcli/releases/download/v0.9.0/gogcli_0.9.0_linux_amd64.tar.gz | tar xz -C /usr/local/bin
 
-# Optionally install Chromium and Xvfb for browser automation.
-# Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
-# Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
-# Must run after pnpm install so playwright-core is available in node_modules.
-USER root
-ARG OPENCLAW_INSTALL_BROWSER=""
-RUN if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
-      apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
-      mkdir -p /home/node/.cache/ms-playwright && \
-      PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright \
-      node /app/node_modules/playwright-core/cli.js install --with-deps chromium && \
-      chown -R node:node /home/node/.cache/ms-playwright && \
-      apt-get clean && \
-      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
-    fi
+# Install signal-cli
+RUN SIGNAL_CLI_VERSION=$(curl -s https://api.github.com/repos/AsamK/signal-cli/releases/latest | jq -r '.tag_name' | sed 's/^v//') \
+    && curl -sL "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz" \
+    | tar xz -C /opt \
+    && ln -s /opt/signal-cli-${SIGNAL_CLI_VERSION}-Linux-native/bin/signal-cli /usr/local/bin/signal-cli
 
-USER node
-COPY --chown=node:node . .
-RUN pnpm build
-# Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
-ENV OPENCLAW_PREFER_PNPM=1
-RUN pnpm ui:build
+# Install Matrix dependencies
+RUN npm install -g @vector-im/matrix-bot-sdk@0.8.0-element.3 @matrix-org/matrix-sdk-crypto-nodejs@^0.4.0
 
-ENV NODE_ENV=production
-
-# Security hardening: Run as non-root user
-# The node:22-bookworm image includes a 'node' user (uid 1000)
-# This reduces the attack surface by preventing container escape via root privileges
-USER node
-
-# Start gateway server with default config.
-# Binds to loopback (127.0.0.1) by default for security.
-#
-# For container platforms requiring external health checks:
-#   1. Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD env var
-#   2. Override CMD: ["node","openclaw.mjs","gateway","--allow-unconfigured","--bind","lan"]
-CMD ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+# Entrypoint auto-installs missing plugins before starting
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["entrypoint.sh"]
+CMD ["openclaw", "gateway", "run"]

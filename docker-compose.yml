@@ -9,10 +9,12 @@ services:
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-http://192.168.1.168:18795}
+      DEPLOY_WEBHOOK_TOKEN: ${DEPLOY_WEBHOOK_TOKEN}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_CONFIG_DIR}/openclaw.json:/home/node/.openclaw/openclaw.json:ro
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_CONFIG_DIR}/ssh:/home/node/.ssh
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
@@ -40,10 +42,11 @@ services:
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-http://192.168.1.168:18795}
+      DEPLOY_WEBHOOK_TOKEN: ${DEPLOY_WEBHOOK_TOKEN}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_CONFIG_DIR}/ssh:/home/node/.ssh
     stdin_open: true
     tty: true
     init: true

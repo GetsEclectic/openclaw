@@ -1,3 +1,6 @@
+deploy-webhook/
+.env.webhook
+.deploy-state.json
 .git
 .worktrees
 .bun-cache
@@ -58,3 +61,4 @@ vendor/
 !vendor/a2ui/renderers/
 !vendor/a2ui/renderers/lit/
 !vendor/a2ui/renderers/lit/**
+node_modules
