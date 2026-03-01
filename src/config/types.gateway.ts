@@ -195,14 +195,6 @@ export type GatewayReloadConfig = {
   debounceMs?: number;
 };
 
-export type GatewayHttpChatCompletionsConfig = {
-  /**
-   * If false, the Gateway will not serve `POST /v1/chat/completions`.
-   * Default: false when absent.
-   */
-  enabled?: boolean;
-};
-
 export type GatewayHttpResponsesConfig = {
   /**
    * If false, the Gateway will not serve `POST /v1/responses` (OpenResponses API).
@@ -275,7 +267,6 @@ export type GatewayHttpResponsesImagesConfig = {
 };
 
 export type GatewayHttpEndpointsConfig = {
-  chatCompletions?: GatewayHttpChatCompletionsConfig;
   responses?: GatewayHttpResponsesConfig;
 };
 

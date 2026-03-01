@@ -578,12 +578,6 @@ export const OpenClawSchema = z
           .object({
             endpoints: z
               .object({
-                chatCompletions: z
-                  .object({
-                    enabled: z.boolean().optional(),
-                  })
-                  .strict()
-                  .optional(),
                 responses: z
                   .object({
                     enabled: z.boolean().optional(),

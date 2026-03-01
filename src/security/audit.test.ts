@@ -2133,11 +2133,11 @@ describe("security audit", () => {
           gateway: {
             bind: "loopback",
             auth: { mode: "none" },
-            http: { endpoints: { chatCompletions: { enabled: true } } },
+            http: { endpoints: { responses: { enabled: true } } },
           },
         },
         expectedSeverity: "warn",
-        detailIncludes: ["/tools/invoke", "/v1/chat/completions"],
+        detailIncludes: ["/tools/invoke", "/v1/responses"],
       },
       {
         name: "remote no-auth",
@@ -2173,7 +2173,6 @@ describe("security audit", () => {
         auth: { mode: "token", token: "secret" },
         http: {
           endpoints: {
-            chatCompletions: { enabled: true },
             responses: { enabled: true },
           },
         },
@@ -2189,7 +2188,6 @@ describe("security audit", () => {
       gateway: {
         http: {
           endpoints: {
-            chatCompletions: { enabled: true },
             responses: { enabled: true },
           },
         },
