@@ -661,23 +661,17 @@ export function collectGatewayHttpSessionKeyOverrideFindings(
   cfg: OpenClawConfig,
 ): SecurityAuditFinding[] {
   const findings: SecurityAuditFinding[] = [];
-  const chatCompletionsEnabled = cfg.gateway?.http?.endpoints?.chatCompletions?.enabled === true;
   const responsesEnabled = cfg.gateway?.http?.endpoints?.responses?.enabled === true;
-  if (!chatCompletionsEnabled && !responsesEnabled) {
+  if (!responsesEnabled) {
     return findings;
   }
-
-  const enabledEndpoints = [
-    chatCompletionsEnabled ? "/v1/chat/completions" : null,
-    responsesEnabled ? "/v1/responses" : null,
-  ].filter((entry): entry is string => Boolean(entry));
 
   findings.push({
     checkId: "gateway.http.session_key_override_enabled",
     severity: "info",
     title: "HTTP API session-key override is enabled",
     detail:
-      `${enabledEndpoints.join(", ")} accept x-openclaw-session-key for per-request session routing. ` +
+      "/v1/responses accepts x-openclaw-session-key for per-request session routing. " +
       "Treat API credential holders as trusted principals.",
   });
 
@@ -695,13 +689,10 @@ export function collectGatewayHttpNoAuthFindings(
     return findings;
   }
 
-  const chatCompletionsEnabled = cfg.gateway?.http?.endpoints?.chatCompletions?.enabled === true;
   const responsesEnabled = cfg.gateway?.http?.endpoints?.responses?.enabled === true;
-  const enabledEndpoints = [
-    "/tools/invoke",
-    chatCompletionsEnabled ? "/v1/chat/completions" : null,
-    responsesEnabled ? "/v1/responses" : null,
-  ].filter((entry): entry is string => Boolean(entry));
+  const enabledEndpoints = ["/tools/invoke", responsesEnabled ? "/v1/responses" : null].filter(
+    (entry): entry is string => Boolean(entry),
+  );
 
   const remoteExposure = isGatewayRemotelyExposed(cfg);
   findings.push({
