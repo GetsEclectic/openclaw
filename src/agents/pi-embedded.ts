@@ -13,4 +13,5 @@ export {
   resolveEmbeddedSessionLane,
   runEmbeddedPiAgent,
   waitForEmbeddedPiRunEnd,
+  waitForEmbeddedPiRunStreaming,
 } from "./pi-embedded-runner.js";

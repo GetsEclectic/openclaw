@@ -6,6 +6,7 @@ import {
   isEmbeddedPiRunActive,
   isEmbeddedPiRunStreaming,
   resolveEmbeddedSessionLane,
+  waitForEmbeddedPiRunStreaming,
 } from "../../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
@@ -500,6 +501,19 @@ export async function runPreparedReply(
     },
   };
 
+  // When steer mode is active and the lane is occupied but no run is registered
+  // yet, wait for the pending run to start streaming so we can steer into it.
+  // This closes the timing gap between lane entry and run registration.
+  let effectiveIsActive = isActive;
+  let effectiveIsStreaming = isStreaming;
+  if (shouldSteer && !isStreaming && laneSize > 0) {
+    const streaming = await waitForEmbeddedPiRunStreaming(sessionIdFinal, 10_000);
+    if (streaming) {
+      effectiveIsActive = true;
+      effectiveIsStreaming = true;
+    }
+  }
+
   return runReplyAgent({
     commandBody: prefixedCommandBody,
     followupRun,
@@ -507,8 +521,8 @@ export async function runPreparedReply(
     resolvedQueue,
     shouldSteer,
     shouldFollowup,
-    isActive,
-    isStreaming,
+    isActive: effectiveIsActive,
+    isStreaming: effectiveIsStreaming,
     opts,
     typing,
     sessionEntry,

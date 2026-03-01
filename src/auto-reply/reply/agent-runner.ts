@@ -19,6 +19,7 @@ import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { generateSecureUuid } from "../../infra/secure-random.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
+import { diagnosticLogger as steerDiag } from "../../logging/diagnostic.js";
 import { defaultRuntime } from "../../runtime.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../../utils/usage-format.js";
 import {
@@ -227,9 +228,15 @@ export async function runReplyAgent(params: {
     }
   };
 
+  steerDiag.debug(
+    `steer check: shouldSteer=${shouldSteer} isStreaming=${isStreaming} isActive=${isActive} sessionId=${followupRun.run.sessionId}`,
+  );
   if (shouldSteer && isStreaming) {
     const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt);
-    if (steered && !shouldFollowup) {
+    steerDiag.debug(
+      `steer attempt: steered=${steered} shouldFollowup=${shouldFollowup} sessionId=${followupRun.run.sessionId}`,
+    );
+    if (steered) {
       await touchActiveSessionEntry();
       typing.cleanup();
       return undefined;

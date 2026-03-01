@@ -64,6 +64,57 @@ export function isEmbeddedPiRunStreaming(sessionId: string): boolean {
   return handle.isStreaming();
 }
 
+/**
+ * Wait for an embedded run to start streaming. Used by steer-backlog mode
+ * to close the timing gap between lane entry and run registration.
+ * Returns true if the run started streaming, false on timeout or if the
+ * run ended before streaming began.
+ */
+export function waitForEmbeddedPiRunStreaming(
+  sessionId: string,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  if (isEmbeddedPiRunStreaming(sessionId)) {
+    return Promise.resolve(true);
+  }
+
+  const POLL_MS = 50;
+  const deadline = Date.now() + timeoutMs;
+  let sawActive = ACTIVE_EMBEDDED_RUNS.has(sessionId);
+
+  return new Promise((resolve) => {
+    const check = () => {
+      if (isEmbeddedPiRunStreaming(sessionId)) {
+        diag.debug(`steer wait: streaming ready sessionId=${sessionId}`);
+        resolve(true);
+        return;
+      }
+
+      const currentlyActive = ACTIVE_EMBEDDED_RUNS.has(sessionId);
+      if (currentlyActive) {
+        sawActive = true;
+      }
+
+      // If we saw the run register and now it's gone, it ended without streaming
+      if (sawActive && !currentlyActive) {
+        diag.debug(`steer wait: run ended before streaming sessionId=${sessionId}`);
+        resolve(false);
+        return;
+      }
+
+      if (Date.now() >= deadline) {
+        diag.debug(`steer wait: timeout sessionId=${sessionId}`);
+        resolve(false);
+        return;
+      }
+
+      setTimeout(check, POLL_MS);
+    };
+
+    setTimeout(check, POLL_MS);
+  });
+}
+
 export function getActiveEmbeddedRunCount(): number {
   return ACTIVE_EMBEDDED_RUNS.size;
 }

@@ -16,6 +16,7 @@ export {
   isEmbeddedPiRunStreaming,
   queueEmbeddedPiMessage,
   waitForEmbeddedPiRunEnd,
+  waitForEmbeddedPiRunStreaming,
 } from "./pi-embedded-runner/runs.js";
 export { buildEmbeddedSandboxInfo } from "./pi-embedded-runner/sandbox-info.js";
 export { createSystemPromptOverride } from "./pi-embedded-runner/system-prompt.js";

@@ -633,7 +633,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         },
       });
       const streamingEnabled = cfg.channels?.matrix?.streaming !== "off";
-      const draftStream = streamingEnabled
+      let draftStream = streamingEnabled
         ? createMatrixDraftStream({
             roomId,
             client,
@@ -697,7 +697,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           onPartialReply: draftStream
             ? async (payload) => {
                 const text = payload.text?.trimEnd();
-                if (text) draftStream.update(text);
+                if (text) draftStream?.update(text);
               }
             : undefined,
           onToolStart: streamingEnabled
@@ -777,6 +777,24 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             if (toolStatusDraft && !toolStatusStopped) {
               toolStatusStopped = true;
               await toolStatusDraft.stop();
+            }
+            // If we've already sent content via the draft stream, start a new message.
+            // This ensures steered messages and multi-turn responses each get their own message
+            // instead of editing the previous one.
+            if (draftStream?.messageId()) {
+              await draftStream.flush();
+              draftStream.stop();
+              draftStream = createMatrixDraftStream({
+                roomId,
+                client,
+                threadId: threadTarget,
+                accountId: route.accountId,
+                log: logVerboseMessage,
+                warn: logVerboseMessage,
+              });
+              toolLines.length = 0;
+              toolStatusDraft = undefined;
+              toolStatusStopped = false;
             }
           },
         },
