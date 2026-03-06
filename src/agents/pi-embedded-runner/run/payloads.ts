@@ -292,11 +292,12 @@ export function buildEmbeddedRunPayloads(params: {
         params.lastToolError.meta ? [params.lastToolError.meta] : undefined,
         { markdown: useMarkdown },
       );
+      const failedLabel = useMarkdown ? "**failed**" : "failed";
       const errorSuffix =
         warningPolicy.includeDetails && params.lastToolError.error
           ? `: ${params.lastToolError.error}`
           : "";
-      const warningText = `⚠️ ${toolSummary} failed${errorSuffix}`;
+      const warningText = `⚠️ ${toolSummary} ${failedLabel}${errorSuffix}`;
       const normalizedWarning = normalizeTextForComparison(warningText);
       const duplicateWarning = normalizedWarning
         ? replyItems.some((item) => {

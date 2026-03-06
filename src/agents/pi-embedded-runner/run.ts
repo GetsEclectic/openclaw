@@ -516,6 +516,7 @@ export async function runEmbeddedPiAgent(
       let lastRunPromptUsage: ReturnType<typeof normalizeUsage> | undefined;
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
+      let lastFailureReason: string | null = null;
       const maybeMarkAuthProfileFailure = async (failure: {
         profileId?: string;
         reason?: Parameters<typeof markAuthProfileFailure>[0]["reason"] | null;
@@ -566,6 +567,25 @@ export async function runEmbeddedPiAgent(
             };
           }
           runLoopIterations += 1;
+
+          // Exponential backoff for transient errors (overload, rate limit, 5xx).
+          // Skip backoff for profile rotation, thinking-level fallback, or compaction retries.
+          if (runLoopIterations > 1 && lastFailureReason) {
+            const isTransient =
+              lastFailureReason === "rate_limit" || lastFailureReason === "timeout";
+            if (isTransient) {
+              const baseMs = 1000;
+              const maxMs = 30_000;
+              const exponential = baseMs * Math.pow(2, Math.min(runLoopIterations - 2, 10));
+              const jitter = Math.random() * 0.5 + 0.75; // 0.75x–1.25x
+              const delayMs = Math.min(maxMs, Math.floor(exponential * jitter));
+              log.info(
+                `Transient error (${lastFailureReason}), backing off ${delayMs}ms before retry ${runLoopIterations}`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+          }
+
           attemptedThinking.add(thinkLevel);
           await fs.mkdir(resolvedWorkspace, { recursive: true });
 
@@ -710,6 +730,7 @@ export async function runEmbeddedPiAgent(
               log.warn(
                 `context overflow persisted after in-attempt compaction (attempt ${overflowCompactionAttempts}/${MAX_OVERFLOW_COMPACTION_ATTEMPTS}); retrying prompt without additional compaction for ${provider}/${modelId}`,
               );
+              lastFailureReason = null; // compaction retry, not transient
               continue;
             }
             // Attempt explicit overflow compaction only when this attempt did not
@@ -759,6 +780,7 @@ export async function runEmbeddedPiAgent(
               if (compactResult.compacted) {
                 autoCompactionCount += 1;
                 log.info(`auto-compaction succeeded for ${provider}/${modelId}; retrying prompt`);
+                lastFailureReason = null; // compaction retry, not transient
                 continue;
               }
               log.warn(
@@ -802,6 +824,7 @@ export async function runEmbeddedPiAgent(
                   );
                   // Do NOT reset overflowCompactionAttempts here — the global cap must remain
                   // enforced across all iterations to prevent unbounded compaction cycles (OC-65).
+                  lastFailureReason = null; // truncation retry, not transient
                   continue;
                 }
                 log.warn(
@@ -913,6 +936,7 @@ export async function runEmbeddedPiAgent(
               promptFailoverReason !== "timeout" &&
               (await advanceAuthProfile())
             ) {
+              lastFailureReason = promptFailoverReason;
               continue;
             }
             const fallbackThinking = pickFallbackThinkingLevel({
@@ -924,6 +948,7 @@ export async function runEmbeddedPiAgent(
                 `unsupported thinking level for ${provider}/${modelId}; retrying with ${fallbackThinking}`,
               );
               thinkLevel = fallbackThinking;
+              lastFailureReason = null; // not a transient error
               continue;
             }
             // FIX: Throw FailoverError for prompt errors when fallbacks configured
@@ -949,6 +974,7 @@ export async function runEmbeddedPiAgent(
               `unsupported thinking level for ${provider}/${modelId}; retrying with ${fallbackThinking}`,
             );
             thinkLevel = fallbackThinking;
+            lastFailureReason = null; // not a transient error
             continue;
           }
 
@@ -1009,6 +1035,7 @@ export async function runEmbeddedPiAgent(
 
             const rotated = await advanceAuthProfile();
             if (rotated) {
+              lastFailureReason = assistantFailoverReason;
               continue;
             }
 
