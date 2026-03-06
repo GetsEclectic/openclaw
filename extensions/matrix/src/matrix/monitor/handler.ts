@@ -703,16 +703,16 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           onToolStart: streamingEnabled
             ? async ({ name, args, phase }) => {
                 const TOOL_EMOJIS: Record<string, string> = {
-                  exec: "⚙️",
+                  exec: "🛠️",
                   read: "📖",
-                  write: "✏️",
-                  edit: "✏️",
-                  web_fetch: "🌐",
-                  web_search: "🔍",
+                  write: "✍️",
+                  edit: "📝",
+                  web_fetch: "📄",
+                  web_search: "🔎",
                   browser: "🌐",
                   memory_search: "🧠",
                   memory_store: "🧠",
-                  memory_get: "🧠",
+                  memory_get: "📓",
                 };
                 const DETAIL_KEYS: Record<string, string[]> = {
                   exec: ["command"],
@@ -725,7 +725,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                   memory_store: ["text"],
                 };
                 const tool = (name ?? "tool").toLowerCase().replace(/ /g, "_");
-                const emoji = (TOOL_EMOJIS as Record<string, string>)[tool] ?? "🔧";
+                const emoji = (TOOL_EMOJIS as Record<string, string>)[tool] ?? "🧩";
                 const label = tool.replace(/_/g, " ");
                 const allKeys = DETAIL_KEYS as Record<string, string[]>;
                 const detailKeys = allKeys[tool] ?? ["query", "command", "path", "url", "message"];
@@ -734,13 +734,18 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                   for (const k of detailKeys) {
                     const v = args[k];
                     if (v && typeof v === "string") {
-                      detail = v.replace(/\n/g, " ").slice(0, 80);
-                      if (v.length > 80) detail += "…";
+                      detail = v.replace(/\n/g, " ").slice(0, 160);
+                      if (v.length > 160) detail += "…";
                       break;
                     }
                   }
                 }
-                const line = detail ? emoji + " " + label + ": " + detail : emoji + " " + label;
+                const boldLabel = `**${label}**`;
+                const codeDetail = detail && !detail.includes("`") ? `\`${detail}\`` : detail;
+                const line = codeDetail
+                  ? `${emoji} ${boldLabel}: ${codeDetail}`
+                  : `${emoji} ${boldLabel}`;
+                logVerboseMessage(`[tool-status] line=${JSON.stringify(line)} phase=${phase}`);
                 // On update phase with detail: amend the last line for this tool instead of adding a new one
                 const lastIdx = toolLines.length - 1;
                 if (
@@ -753,7 +758,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 } else if (
                   phase !== "update" ||
                   toolLines.length === 0 ||
-                  !toolLines[lastIdx].startsWith(emoji + " " + label)
+                  !toolLines[lastIdx].startsWith(emoji + " " + boldLabel)
                 ) {
                   toolLines.push(line);
                 } else if (detail) {
@@ -776,7 +781,8 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           onAssistantMessageStart: async () => {
             if (toolStatusDraft && !toolStatusStopped) {
               toolStatusStopped = true;
-              await toolStatusDraft.stop();
+              await toolStatusDraft.flush();
+              toolStatusDraft.stop();
             }
             // If we've already sent content via the draft stream, start a new message.
             // This ensures steered messages and multi-turn responses each get their own message
@@ -802,7 +808,8 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       await draftStream?.flush();
       markDispatchIdle();
       if (toolStatusDraft && !toolStatusStopped) {
-        await toolStatusDraft.stop();
+        await toolStatusDraft.flush();
+        toolStatusDraft.stop();
       }
       if (!queuedFinal) {
         await draftStream?.clear();

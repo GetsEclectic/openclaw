@@ -19,6 +19,8 @@ export const EventType = {
 export type RoomMessageEventContent = {
   msgtype: string;
   body: string;
+  format?: string;
+  formatted_body?: string;
   "m.new_content"?: RoomMessageEventContent;
   "m.relates_to"?: {
     rel_type?: string;

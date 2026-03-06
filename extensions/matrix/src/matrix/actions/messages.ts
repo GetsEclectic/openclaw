@@ -1,4 +1,5 @@
 import { resolveMatrixRoomId, sendMessageMatrix } from "../send.js";
+import { applyMatrixFormatting } from "../send/formatting.js";
 import { resolveActionClient } from "./client.js";
 import { resolveMatrixActionLimit } from "./limits.js";
 import { summarizeMatrixRawEvent } from "./summary.js";
@@ -43,10 +44,11 @@ export async function editMatrixMessage(
   const { client, stopOnDone } = await resolveActionClient(opts);
   try {
     const resolvedRoom = await resolveMatrixRoomId(client, roomId);
-    const newContent = {
+    const newContent: RoomMessageEventContent = {
       msgtype: MsgType.Text,
       body: trimmed,
-    } satisfies RoomMessageEventContent;
+    };
+    applyMatrixFormatting(newContent, trimmed);
     const payload: RoomMessageEventContent = {
       msgtype: MsgType.Text,
       body: `* ${trimmed}`,
@@ -56,6 +58,7 @@ export async function editMatrixMessage(
         event_id: messageId,
       },
     };
+    applyMatrixFormatting(payload, trimmed);
     const eventId = await client.sendMessage(resolvedRoom, payload);
     return { eventId: eventId ?? null };
   } finally {

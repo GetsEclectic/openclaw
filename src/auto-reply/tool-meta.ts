@@ -23,7 +23,8 @@ export function formatToolAggregate(
 ): string {
   const filtered = (metas ?? []).filter(Boolean).map(shortenMeta);
   const display = resolveToolDisplay({ name: toolName });
-  const prefix = `${display.emoji} ${display.label}`;
+  const label = options?.markdown ? `**${display.label}**` : display.label;
+  const prefix = `${display.emoji} ${label}`;
   if (!filtered.length) {
     return prefix;
   }
@@ -84,10 +85,11 @@ function formatMetaForDisplay(
   if (normalized === "exec" || normalized === "bash") {
     const { flags, body } = splitExecFlags(meta);
     if (flags.length > 0) {
+      const formattedFlags = markdown ? flags.map((f) => `*${f}*`).join(" · ") : flags.join(" · ");
       if (!body) {
-        return flags.join(" · ");
+        return formattedFlags;
       }
-      return `${flags.join(" · ")} · ${maybeWrapMarkdown(body, markdown)}`;
+      return `${formattedFlags} · ${maybeWrapMarkdown(body, markdown)}`;
     }
   }
   return maybeWrapMarkdown(meta, markdown);
