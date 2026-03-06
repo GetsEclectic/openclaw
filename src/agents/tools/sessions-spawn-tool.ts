@@ -17,6 +17,7 @@ const SessionsSpawnToolSchema = Type.Object({
   thread: Type.Optional(Type.Boolean()),
   mode: optionalStringEnum(SUBAGENT_SPAWN_MODES),
   cleanup: optionalStringEnum(["delete", "keep"] as const),
+  metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
 export function createSessionsSpawnTool(opts?: {
@@ -61,6 +62,13 @@ export function createSessionsSpawnTool(opts?: {
           : undefined;
       const thread = params.thread === true;
 
+      const metadata =
+        params.metadata != null &&
+        typeof params.metadata === "object" &&
+        !Array.isArray(params.metadata)
+          ? (params.metadata as Record<string, unknown>)
+          : undefined;
+
       const result = await spawnSubagentDirect(
         {
           task,
@@ -73,6 +81,7 @@ export function createSessionsSpawnTool(opts?: {
           mode,
           cleanup,
           expectsCompletionMessage: true,
+          metadata,
         },
         {
           agentSessionKey: opts?.agentSessionKey,

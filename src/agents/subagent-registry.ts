@@ -828,6 +828,7 @@ export function registerSubagentRun(params: {
   runTimeoutSeconds?: number;
   expectsCompletionMessage?: boolean;
   spawnMode?: "run" | "session";
+  metadata?: Record<string, unknown>;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -855,6 +856,7 @@ export function registerSubagentRun(params: {
     startedAt: now,
     archiveAtMs,
     cleanupHandled: false,
+    metadata: params.metadata,
   });
   ensureListener();
   persistSubagentRuns();

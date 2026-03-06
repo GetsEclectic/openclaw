@@ -32,4 +32,6 @@ export type SubagentRunRecord = {
   endedReason?: SubagentLifecycleEndedReason;
   /** Set after the subagent_ended hook has been emitted successfully once. */
   endedHookEmittedAt?: number;
+  /** Arbitrary metadata attached by the spawning agent (e.g. worktree path, log file). */
+  metadata?: Record<string, unknown>;
 };
