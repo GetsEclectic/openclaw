@@ -5,16 +5,23 @@ services:
     environment:
       HOME: /home/node
       TERM: xterm-256color
+      XDG_CONFIG_HOME: /home/node/.openclaw/.config
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
-      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-http://192.168.1.168:18795}
-      DEPLOY_WEBHOOK_TOKEN: ${DEPLOY_WEBHOOK_TOKEN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
+      ANDROID_ADB_SERVER_ADDRESS: host-gateway
+    extra_hosts:
+      - "host-gateway:host-gateway"
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_CONFIG_DIR}/openclaw.json:/home/node/.openclaw/openclaw.json:ro
+      - ${OPENCLAW_CONFIG_DIR}/extensions:/home/node/.openclaw/extensions:ro
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
@@ -43,8 +50,6 @@ services:
       CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
-      DEPLOY_WEBHOOK_URL: ${DEPLOY_WEBHOOK_URL:-http://192.168.1.168:18795}
-      DEPLOY_WEBHOOK_TOKEN: ${DEPLOY_WEBHOOK_TOKEN}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
