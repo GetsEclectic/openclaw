@@ -230,6 +230,7 @@ export function buildAgentSystemPrompt(params: {
     channel: string;
   };
   memoryCitationsMode?: MemoryCitationsMode;
+  compactionEnabled?: boolean;
 }) {
   const coreToolSummaries: Record<string, string> = {
     read: "Read file contents",
@@ -488,6 +489,13 @@ export function buildAgentSystemPrompt(params: {
     workspaceGuidance,
     ...workspaceNotes,
     "",
+    ...(params.compactionEnabled
+      ? [
+          "## Context Management",
+          "Auto-compaction is enabled. When the context window fills, older messages are automatically summarized. You have effectively unlimited context — do not rush or truncate work due to context concerns.",
+          "",
+        ]
+      : []),
     ...docsSection,
     params.sandboxInfo?.enabled ? "## Sandbox" : "",
     params.sandboxInfo?.enabled

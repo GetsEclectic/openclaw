@@ -555,6 +555,7 @@ export async function runEmbeddedAttempt(
       userTimeFormat,
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
+      compactionEnabled: params.config?.agents?.defaults?.compaction?.mode === "safeguard",
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",

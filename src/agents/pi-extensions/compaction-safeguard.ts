@@ -23,6 +23,7 @@ const log = createSubsystemLogger("compaction-safeguard");
 
 // Track session managers that have already logged the missing-model warning to avoid log spam.
 const missedModelWarningSessions = new WeakSet<object>();
+const compactionInProgress = new WeakSet<object>();
 const TURN_PREFIX_INSTRUCTIONS =
   "This summary covers the prefix of a split turn. Focus on the original request," +
   " early progress, and any details needed to understand the retained suffix.";
@@ -190,182 +191,212 @@ async function readWorkspaceContextForSummary(): Promise<string> {
 
 export default function compactionSafeguardExtension(api: ExtensionAPI): void {
   api.on("session_before_compact", async (event, ctx) => {
-    const { preparation, customInstructions, signal } = event;
-    const { readFiles, modifiedFiles } = computeFileLists(preparation.fileOps);
-    const fileOpsSummary = formatFileOperations(readFiles, modifiedFiles);
-    const toolFailures = collectToolFailures([
-      ...preparation.messagesToSummarize,
-      ...preparation.turnPrefixMessages,
-    ]);
-    const toolFailureSection = formatToolFailuresSection(toolFailures);
-
-    // Model resolution: ctx.model is undefined in compact.ts workflow (extensionRunner.initialize() is never called).
-    // Fall back to runtime.model which is explicitly passed when building extension paths.
-    const runtime = getCompactionSafeguardRuntime(ctx.sessionManager);
-    const model = ctx.model ?? runtime?.model;
-    if (!model) {
-      // Log warning once per session when both models are missing (diagnostic for future issues).
-      // Use a WeakSet to track which session managers have already logged the warning.
-      if (!ctx.model && !runtime?.model && !missedModelWarningSessions.has(ctx.sessionManager)) {
-        missedModelWarningSessions.add(ctx.sessionManager);
-        console.warn(
-          "[compaction-safeguard] Both ctx.model and runtime.model are undefined. " +
-            "Compaction summarization will not run. This indicates extensionRunner.initialize() " +
-            "was not called and model was not passed through runtime registry.",
-        );
-      }
+    if (compactionInProgress.has(ctx.sessionManager)) {
+      log.warn("Recursive compaction detected; cancelling.");
       return { cancel: true };
     }
-
-    const apiKey = await ctx.modelRegistry.getApiKey(model);
-    if (!apiKey) {
-      console.warn(
-        "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
-      );
-      return { cancel: true };
-    }
-
+    compactionInProgress.add(ctx.sessionManager);
     try {
-      const modelContextWindow = resolveContextWindowTokens(model);
-      const contextWindowTokens = runtime?.contextWindowTokens ?? modelContextWindow;
-      const turnPrefixMessages = preparation.turnPrefixMessages ?? [];
-      let messagesToSummarize = preparation.messagesToSummarize;
+      const { preparation, customInstructions, signal } = event;
+      const { readFiles, modifiedFiles } = computeFileLists(preparation.fileOps);
+      const fileOpsSummary = formatFileOperations(readFiles, modifiedFiles);
+      const toolFailures = collectToolFailures([
+        ...preparation.messagesToSummarize,
+        ...preparation.turnPrefixMessages,
+      ]);
+      const toolFailureSection = formatToolFailuresSection(toolFailures);
 
-      const maxHistoryShare = runtime?.maxHistoryShare ?? 0.5;
+      // Model resolution: ctx.model is undefined in compact.ts workflow (extensionRunner.initialize() is never called).
+      // Fall back to runtime.model which is explicitly passed when building extension paths.
+      const runtime = getCompactionSafeguardRuntime(ctx.sessionManager);
+      const model = ctx.model ?? runtime?.model;
+      if (!model) {
+        // Log warning once per session when both models are missing (diagnostic for future issues).
+        // Use a WeakSet to track which session managers have already logged the warning.
+        if (!ctx.model && !runtime?.model && !missedModelWarningSessions.has(ctx.sessionManager)) {
+          missedModelWarningSessions.add(ctx.sessionManager);
+          console.warn(
+            "[compaction-safeguard] Both ctx.model and runtime.model are undefined. " +
+              "Compaction summarization will not run. This indicates extensionRunner.initialize() " +
+              "was not called and model was not passed through runtime registry.",
+          );
+        }
+        return { cancel: true };
+      }
 
-      const tokensBefore =
-        typeof preparation.tokensBefore === "number" && Number.isFinite(preparation.tokensBefore)
-          ? preparation.tokensBefore
-          : undefined;
+      const apiKey = await ctx.modelRegistry.getApiKey(model);
+      if (!apiKey) {
+        console.warn(
+          "Compaction safeguard: no API key available; cancelling compaction to preserve history.",
+        );
+        return { cancel: true };
+      }
 
-      let droppedSummary: string | undefined;
+      const ENHANCED_SUMMARY_INSTRUCTIONS = [
+        "Include specific filenames, line numbers, and code snippets for in-progress work.",
+        "List ALL errors encountered and how they were resolved, including user corrections.",
+        "Preserve ALL user messages verbatim or near-verbatim — user intent must never be lost.",
+        "Note any user feedback that changed approach.",
+      ].join(" ");
 
-      if (tokensBefore !== undefined) {
-        const summarizableTokens =
-          estimateMessagesTokens(messagesToSummarize) + estimateMessagesTokens(turnPrefixMessages);
-        const newContentTokens = Math.max(0, Math.floor(tokensBefore - summarizableTokens));
-        // Apply SAFETY_MARGIN so token underestimates don't trigger unnecessary pruning
-        const maxHistoryTokens = Math.floor(contextWindowTokens * maxHistoryShare * SAFETY_MARGIN);
+      const effectiveInstructions = customInstructions
+        ? `${customInstructions}\n\n${ENHANCED_SUMMARY_INSTRUCTIONS}`
+        : ENHANCED_SUMMARY_INSTRUCTIONS;
 
-        if (newContentTokens > maxHistoryTokens) {
-          const pruned = pruneHistoryForContextShare({
-            messages: messagesToSummarize,
-            maxContextTokens: contextWindowTokens,
-            maxHistoryShare,
-            parts: 2,
-          });
-          if (pruned.droppedChunks > 0) {
-            const newContentRatio = (newContentTokens / contextWindowTokens) * 100;
-            log.warn(
-              `Compaction safeguard: new content uses ${newContentRatio.toFixed(
-                1,
-              )}% of context; dropped ${pruned.droppedChunks} older chunk(s) ` +
-                `(${pruned.droppedMessages} messages) to fit history budget.`,
-            );
-            messagesToSummarize = pruned.messages;
+      try {
+        const modelContextWindow = resolveContextWindowTokens(model);
+        const contextWindowTokens = runtime?.contextWindowTokens ?? modelContextWindow;
+        const turnPrefixMessages = preparation.turnPrefixMessages ?? [];
+        let messagesToSummarize = preparation.messagesToSummarize;
 
-            // Summarize dropped messages so context isn't lost
-            if (pruned.droppedMessagesList.length > 0) {
-              try {
-                const droppedChunkRatio = computeAdaptiveChunkRatio(
-                  pruned.droppedMessagesList,
-                  contextWindowTokens,
-                );
-                const droppedMaxChunkTokens = Math.max(
+        const maxHistoryShare = runtime?.maxHistoryShare ?? 0.5;
+
+        const tokensBefore =
+          typeof preparation.tokensBefore === "number" && Number.isFinite(preparation.tokensBefore)
+            ? preparation.tokensBefore
+            : undefined;
+
+        let droppedSummary: string | undefined;
+
+        if (tokensBefore !== undefined) {
+          const summarizableTokens =
+            estimateMessagesTokens(messagesToSummarize) +
+            estimateMessagesTokens(turnPrefixMessages);
+          const newContentTokens = Math.max(0, Math.floor(tokensBefore - summarizableTokens));
+          // Apply SAFETY_MARGIN so token underestimates don't trigger unnecessary pruning
+          const maxHistoryTokens = Math.floor(
+            contextWindowTokens * maxHistoryShare * SAFETY_MARGIN,
+          );
+
+          if (newContentTokens > maxHistoryTokens) {
+            const pruned = pruneHistoryForContextShare({
+              messages: messagesToSummarize,
+              maxContextTokens: contextWindowTokens,
+              maxHistoryShare,
+              parts: 2,
+            });
+            if (pruned.droppedChunks > 0) {
+              const newContentRatio = (newContentTokens / contextWindowTokens) * 100;
+              log.warn(
+                `Compaction safeguard: new content uses ${newContentRatio.toFixed(
                   1,
-                  Math.floor(contextWindowTokens * droppedChunkRatio) -
-                    SUMMARIZATION_OVERHEAD_TOKENS,
-                );
-                droppedSummary = await summarizeInStages({
-                  messages: pruned.droppedMessagesList,
-                  model,
-                  apiKey,
-                  signal,
-                  reserveTokens: Math.max(1, Math.floor(preparation.settings.reserveTokens)),
-                  maxChunkTokens: droppedMaxChunkTokens,
-                  contextWindow: contextWindowTokens,
-                  customInstructions,
-                  previousSummary: preparation.previousSummary,
-                });
-              } catch (droppedError) {
-                log.warn(
-                  `Compaction safeguard: failed to summarize dropped messages, continuing without: ${
-                    droppedError instanceof Error ? droppedError.message : String(droppedError)
-                  }`,
-                );
+                )}% of context; dropped ${pruned.droppedChunks} older chunk(s) ` +
+                  `(${pruned.droppedMessages} messages) to fit history budget.`,
+              );
+              messagesToSummarize = pruned.messages;
+
+              // Summarize dropped messages so context isn't lost
+              if (pruned.droppedMessagesList.length > 0) {
+                try {
+                  const droppedChunkRatio = computeAdaptiveChunkRatio(
+                    pruned.droppedMessagesList,
+                    contextWindowTokens,
+                  );
+                  const droppedMaxChunkTokens = Math.max(
+                    1,
+                    Math.floor(contextWindowTokens * droppedChunkRatio) -
+                      SUMMARIZATION_OVERHEAD_TOKENS,
+                  );
+                  droppedSummary = await summarizeInStages({
+                    messages: pruned.droppedMessagesList,
+                    model,
+                    apiKey,
+                    signal,
+                    reserveTokens: Math.max(1, Math.floor(preparation.settings.reserveTokens)),
+                    maxChunkTokens: droppedMaxChunkTokens,
+                    contextWindow: contextWindowTokens,
+                    customInstructions: effectiveInstructions,
+                    previousSummary: preparation.previousSummary,
+                  });
+                } catch (droppedError) {
+                  log.warn(
+                    `Compaction safeguard: failed to summarize dropped messages, continuing without: ${
+                      droppedError instanceof Error ? droppedError.message : String(droppedError)
+                    }`,
+                  );
+                }
               }
             }
           }
         }
-      }
 
-      // Use adaptive chunk ratio based on message sizes, reserving headroom for
-      // the summarization prompt, system prompt, previous summary, and reasoning budget
-      // that generateSummary adds on top of the serialized conversation chunk.
-      const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
-      const adaptiveRatio = computeAdaptiveChunkRatio(allMessages, contextWindowTokens);
-      const maxChunkTokens = Math.max(
-        1,
-        Math.floor(contextWindowTokens * adaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
-      );
-      const reserveTokens = Math.max(1, Math.floor(preparation.settings.reserveTokens));
+        // Use adaptive chunk ratio based on message sizes, reserving headroom for
+        // the summarization prompt, system prompt, previous summary, and reasoning budget
+        // that generateSummary adds on top of the serialized conversation chunk.
+        const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
+        const adaptiveRatio = computeAdaptiveChunkRatio(allMessages, contextWindowTokens);
+        const maxChunkTokens = Math.max(
+          1,
+          Math.floor(contextWindowTokens * adaptiveRatio) - SUMMARIZATION_OVERHEAD_TOKENS,
+        );
+        const reserveTokens = Math.max(1, Math.floor(preparation.settings.reserveTokens));
 
-      // Feed dropped-messages summary as previousSummary so the main summarization
-      // incorporates context from pruned messages instead of losing it entirely.
-      const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;
+        // Feed dropped-messages summary as previousSummary so the main summarization
+        // incorporates context from pruned messages instead of losing it entirely.
+        const effectivePreviousSummary = droppedSummary ?? preparation.previousSummary;
 
-      const historySummary = await summarizeInStages({
-        messages: messagesToSummarize,
-        model,
-        apiKey,
-        signal,
-        reserveTokens,
-        maxChunkTokens,
-        contextWindow: contextWindowTokens,
-        customInstructions,
-        previousSummary: effectivePreviousSummary,
-      });
-
-      let summary = historySummary;
-      if (preparation.isSplitTurn && turnPrefixMessages.length > 0) {
-        const prefixSummary = await summarizeInStages({
-          messages: turnPrefixMessages,
+        const historySummary = await summarizeInStages({
+          messages: messagesToSummarize,
           model,
           apiKey,
           signal,
           reserveTokens,
           maxChunkTokens,
           contextWindow: contextWindowTokens,
-          customInstructions: TURN_PREFIX_INSTRUCTIONS,
-          previousSummary: undefined,
+          customInstructions: effectiveInstructions,
+          previousSummary: effectivePreviousSummary,
         });
-        summary = `${historySummary}\n\n---\n\n**Turn Context (split turn):**\n\n${prefixSummary}`;
+
+        let summary = historySummary;
+        if (preparation.isSplitTurn && turnPrefixMessages.length > 0) {
+          const prefixSummary = await summarizeInStages({
+            messages: turnPrefixMessages,
+            model,
+            apiKey,
+            signal,
+            reserveTokens,
+            maxChunkTokens,
+            contextWindow: contextWindowTokens,
+            customInstructions: TURN_PREFIX_INSTRUCTIONS,
+            previousSummary: undefined,
+          });
+          summary = `${historySummary}\n\n---\n\n**Turn Context (split turn):**\n\n${prefixSummary}`;
+        }
+
+        summary += toolFailureSection;
+        summary += fileOpsSummary;
+
+        // Append workspace critical context (Session Startup + Red Lines from AGENTS.md)
+        const workspaceContext = await readWorkspaceContextForSummary();
+        if (workspaceContext) {
+          summary += workspaceContext;
+        }
+
+        log.info(
+          `compaction complete: tokensBefore=${preparation.tokensBefore} ` +
+            `summaryChars=${summary.length} toolFailures=${toolFailures.length} ` +
+            `readFiles=${readFiles.length} modifiedFiles=${modifiedFiles.length} ` +
+            `adaptiveRatio=${adaptiveRatio.toFixed(2)} splitTurn=${preparation.isSplitTurn}`,
+        );
+
+        return {
+          compaction: {
+            summary,
+            firstKeptEntryId: preparation.firstKeptEntryId,
+            tokensBefore: preparation.tokensBefore,
+            details: { readFiles, modifiedFiles },
+          },
+        };
+      } catch (error) {
+        log.warn(
+          `Compaction summarization failed; cancelling compaction to preserve history: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return { cancel: true };
       }
-
-      summary += toolFailureSection;
-      summary += fileOpsSummary;
-
-      // Append workspace critical context (Session Startup + Red Lines from AGENTS.md)
-      const workspaceContext = await readWorkspaceContextForSummary();
-      if (workspaceContext) {
-        summary += workspaceContext;
-      }
-
-      return {
-        compaction: {
-          summary,
-          firstKeptEntryId: preparation.firstKeptEntryId,
-          tokensBefore: preparation.tokensBefore,
-          details: { readFiles, modifiedFiles },
-        },
-      };
-    } catch (error) {
-      log.warn(
-        `Compaction summarization failed; cancelling compaction to preserve history: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return { cancel: true };
+    } finally {
+      compactionInProgress.delete(ctx.sessionManager);
     }
   });
 }
